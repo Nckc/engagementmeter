@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time Dial Test</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+    <style>
+        :root {
+            --primary-color: #6a1b9a;
+            --secondary-color: #f3e5f5;
+            --accent-color: #e91e63;
+            --text-color: #333;
+            --bg-color: #fff;
+            --card-bg: #f5f5f5;
+            --border-radius: 12px;
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            background-color: var(--secondary-color);
+            color: var(--text-color);
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        .container {
+            width: 100%;
+            max-width: 600px;
+            text-align: center;
+            background-color: var(--bg-color);
+            padding: 30px;
+            border-radius: var(--border-radius);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+        }
+        .view-toggle {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            margin-bottom: 25px;
+        }
+        .view-button {
+            background-color: var(--primary-color);
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background-color 0.3s, transform 0.2s;
+        }
+        .view-button:hover {
+            background-color: #7b1fa2;
+            transform: translateY(-2px);
+        }
+        .view {
+            display: none;
+        }
+        .view.active {
+            display: block;
+            animation: fadeIn 0.5s ease-in-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        #participant-view h1, #presenter-view h1 {
+            color: var(--primary-color);
+            font-size: 24px;
+            margin-bottom: 20px;
+        }
+        #participant-view p, #presenter-view p {
+            color: var(--text-color);
+            margin-bottom: 20px;
+        }
+        #rating-container {
+            padding: 20px;
+            background-color: var(--card-bg);
+            border-radius: var(--border-radius);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+        }
+        #rating-slider {
+            width: 100%;
+            -webkit-appearance: none;
+            height: 10px;
+            background: #ddd;
+            outline: none;
+            opacity: 0.7;
+            transition: opacity 0.2s;
+            border-radius: 5px;
+        }
+        #rating-slider:hover {
+            opacity: 1;
+        }
+        #rating-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 25px;
+            height: 25px;
+            background: var(--accent-color);
+            cursor: pointer;
+            border-radius: 50%;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+            transition: transform 0.2s;
+        }
+        #rating-slider::-webkit-slider-thumb:hover {
+            transform: scale(1.1);
+        }
+        #rating-value {
+            font-size: 2rem;
+            font-weight: bold;
+            color: var(--primary-color);
+            margin-top: 15px;
+        }
+        #presenter-view {
+            width: 100%;
+        }
+        #live-chart {
+            width: 100%;
+            height: 400px;
+            background-color: var(--card-bg);
+            padding: 20px;
+            border-radius: var(--border-radius);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="view-toggle">
+        <button class="view-button" id="presenter-button">Start as Presenter</button>
+        <button class="view-button" id="participant-button">Start as Participant</button>
+    </div>
+
+    <div id="presenter-view" class="view">
+        <h1>Live Audience Interest</h1>
+        <p>This graph shows the average interest level of your audience in real-time. Each point on the graph represents the average rating from all active participants at that moment.</p>
+        <div id="live-chart">
+            <canvas id="interestChart"></canvas>
+        </div>
+    </div>
+
+    <div id="participant-view" class="view">
+        <h1>Rate Your Interest</h1>
+        <p>Move the slider to show how interested you are in the presentation right now. The presenter will see your anonymous feedback in real time.</p>
+        <div id="rating-container">
+            <p><strong>Not Interested</strong></p>
+            <input type="range" id="rating-slider" min="0" max="100" value="50">
+            <p><strong>Very Interested</strong></p>
+        </div>
+        <p id="rating-status" style="margin-top: 20px;">Move the slider to begin...</p>
+        <p id="user-id-display" style="font-size: 0.8em; color: #999; margin-top: 20px;"></p>
+    </div>
+</div>
+
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getFirestore, doc, setDoc, onSnapshot, collection, query } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+    import { getAuth, signInWithCustomToken, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+
+    // --- Firebase Setup ---
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+    const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+
+    let app;
+    let db;
+    let auth;
+    let userId;
+
+    async function initializeFirebase() {
+        if (Object.keys(firebaseConfig).length === 0) {
+            console.error("Firebase config is not available. Please ensure the app is running in a firebase-enabled environment.");
+            return;
+        }
+        try {
+            app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+            if (typeof __initial_auth_token !== 'undefined') {
+                await signInWithCustomToken(auth, __initial_auth_token);
+            } else {
+                await signInAnonymously(auth);
+            }
+            userId = auth.currentUser?.uid || crypto.randomUUID();
+            console.log("Firebase initialized successfully. User ID:", userId);
+        } catch (error) {
+            console.error("Firebase initialization failed:", error);
+        }
+    }
+
+    // --- View Toggling ---
+    const presenterView = document.getElementById('presenter-view');
+    const participantView = document.getElementById('participant-view');
+    const viewToggleButtons = document.querySelector('.view-toggle');
+    const container = document.querySelector('.container');
+    const presenterButton = document.getElementById('presenter-button');
+    const participantButton = document.getElementById('participant-button');
+
+    function showView(viewName) {
+        if (viewName === 'presenter') {
+            presenterView.classList.add('active');
+            participantView.classList.remove('active');
+            container.classList.remove('participant-mode');
+            startPresenterLogic();
+        } else {
+            participantView.classList.add('active');
+            presenterView.classList.remove('active');
+            container.classList.add('participant-mode');
+            startParticipantLogic();
+        }
+        viewToggleButtons.style.display = 'none';
+    };
+
+    presenterButton.addEventListener('click', () => showView('presenter'));
+    participantButton.addEventListener('click', () => showView('participant'));
+
+    // --- Participant Logic ---
+    let ratingSlider;
+    let ratingStatus;
+    let userIdDisplay;
+
+    async function startParticipantLogic() {
+        await initializeFirebase();
+        if (!db) return;
+
+        ratingSlider = document.getElementById('rating-slider');
+        ratingStatus = document.getElementById('rating-status');
+        userIdDisplay = document.getElementById('user-id-display');
+        userIdDisplay.textContent = `Your User ID: ${userId}`;
+        let updateInterval;
+        let lastValue = ratingSlider.value;
+
+        // Save data to Firestore on slider change, debounced
+        ratingSlider.addEventListener('input', () => {
+            const newValue = ratingSlider.value;
+            if (newValue !== lastValue) {
+                lastValue = newValue;
+                ratingStatus.textContent = `Current Interest: ${newValue}%`;
+                if (updateInterval) clearInterval(updateInterval);
+                updateInterval = setTimeout(() => {
+                    saveRating(newValue);
+                }, 50);
+            }
+        });
+    }
+
+    async function saveRating(value) {
+        if (!db || !userId) {
+            console.error("Firebase not initialized or user not authenticated.");
+            return;
+        }
+        try {
+            const docRef = doc(db, `/artifacts/${appId}/public/data/dial_testing_ratings`, userId);
+            await setDoc(docRef, { rating: parseInt(value), timestamp: new Date() });
+        } catch (error) {
+            console.error("Error saving rating:", error);
+        }
+    }
+
+    // --- Presenter Logic ---
+    let chart;
+    let chartConfig = {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Average Audience Interest',
+                data: [],
+                borderColor: '#6a1b9a',
+                backgroundColor: 'rgba(106, 27, 154, 0.2)',
+                tension: 0.4,
+                pointRadius: 5,
+                pointBackgroundColor: '#e91e63'
+            }]
+        },
+        options: {
+            maintainAspectRatio: false,
+            responsive: true,
+            scales: {
+                x: {
+                    title: {
+                        display: true,
+                        text: 'Time'
+                    },
+                    grid: {
+                        display: false
+                    },
+                    ticks: {
+                        maxRotation: 0,
+                        autoSkip: true,
+                        maxTicksLimit: 10
+                    }
+                },
+                y: {
+                    title: {
+                        display: true,
+                        text: 'Interest Level (%)'
+                    },
+                    min: 0,
+                    max: 100,
+                    ticks: {
+                        stepSize: 10,
+                        callback: function(value) {
+                            return value + "%";
+                        }
+                    }
+                }
+            },
+            plugins: {
+                legend: {
+                    display: true
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            let label = context.dataset.label || '';
+                            if (label) {
+                                label += ': ';
+                            }
+                            if (context.parsed.y !== null) {
+                                label += context.parsed.y.toFixed(2) + '%';
+                            }
+                            return label;
+                        }
+                    }
+                }
+            }
+        }
+    };
+
+    async function startPresenterLogic() {
+        await initializeFirebase();
+        if (!db) return;
+
+        const ctx = document.getElementById('interestChart').getContext('2d');
+        chart = new Chart(ctx, chartConfig);
+        listenForRatings();
+    }
+
+    async function listenForRatings() {
+        const ratingsCollection = collection(db, `/artifacts/${appId}/public/data/dial_testing_ratings`);
+        const q = query(ratingsCollection);
+
+        onSnapshot(q, (snapshot) => {
+            const ratings = [];
+            snapshot.forEach((doc) => {
+                const data = doc.data();
+                if (data.rating !== undefined) {
+                    ratings.push(data.rating);
+                }
+            });
+
+            if (ratings.length > 0) {
+                const averageRating = ratings.reduce((sum, current) => sum + current, 0) / ratings.length;
+                updateChart(averageRating);
+            }
+        }, (error) => {
+            console.error("Error listening for real-time updates:", error);
+        });
+    }
+
+    function updateChart(newRating) {
+        const now = new Date();
+        const timeLabel = now.getHours().toString().padStart(2, '0') + ':' +
+                         now.getMinutes().toString().padStart(2, '0') + ':' +
+                         now.getSeconds().toString().padStart(2, '0');
+
+        const labels = chart.data.labels;
+        const data = chart.data.datasets[0].data;
+
+        labels.push(timeLabel);
+        data.push(newRating);
+
+        // Keep the chart from getting too long
+        const maxDataPoints = 20;
+        if (labels.length > maxDataPoints) {
+            labels.shift();
+            data.shift();
+        }
+
+        chart.update();
+    }
+</script>
